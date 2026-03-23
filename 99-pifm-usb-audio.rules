@@ -1,0 +1,3 @@
+# PCM2902 USB Audio CODEC — switch pifm source on plug/unplug
+SUBSYSTEM=="sound", ACTION=="add", KERNEL=="controlC*", ATTRS{idVendor}=="08bb", ATTRS{idProduct}=="2902", RUN+="/usr/local/bin/pifm-source-switch.sh add"
+SUBSYSTEM=="sound", ACTION=="remove", KERNEL=="controlC*", ATTRS{idVendor}=="08bb", ATTRS{idProduct}=="2902", RUN+="/usr/local/bin/pifm-source-switch.sh remove"
