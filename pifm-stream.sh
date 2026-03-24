@@ -3,8 +3,10 @@ FREQ=100.0
 STREAM=https://itsshort.info/listen/afroradio/radio.mp3
 BUFFER=/var/lib/pifm/buffer.wav
 BUFFERDIR=/var/lib/pifm
+FIFO=/tmp/pifm_audio.fifo
 
 mkdir -p $BUFFERDIR
+rm -f $FIFO && mkfifo $FIFO
 
 get_max_bytes() {
   AVAIL=$(df -m $BUFFERDIR | awk 'NR==2{print $4}')
@@ -13,7 +15,6 @@ get_max_bytes() {
   echo $(( MAX_MB * 1024 * 1024 ))
 }
 
-# Rolling buffer updater - runs in background always
 update_buffer() {
   while true; do
     timeout 60 /usr/bin/ffmpeg -re -y \
@@ -30,38 +31,31 @@ update_buffer() {
     sleep 1
   done
 }
-
 update_buffer &
 
-# On startup: immediately play buffer if it exists, while live stream connects
-if [ -s $BUFFER ]; then
-  sudo /usr/local/bin/pi_fm_adv -a $BUFFER -f $FREQ 2>/dev/null &
-  BOOT_PID=$!
-fi
-
-# Wait briefly for network
-sleep 5
-
-# Kill boot playback when live stream is ready
-kill $BOOT_PID 2>/dev/null
-pkill -f pi_fm_adv 2>/dev/null
+# pi_fm_adv reads from the FIFO — never restarts, no FM gap
+sudo /usr/local/bin/pi_fm_adv -a $FIFO -f $FREQ &
+FMPID=$!
 sleep 1
 
-# Main live stream loop with buffer fallback
-while true; do
-  pkill -f pi_fm_adv 2>/dev/null
-  sleep 1
-
-  timeout 300 /usr/bin/ffmpeg -re -y \
+feed_live() {
+  /usr/bin/ffmpeg -re -y \
     -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
     -i "$STREAM" -af "dynaudnorm=p=0.95:m=100:s=12:g=15" \
-    -f wav -ar 44100 -ac 1 pipe:1 2>/dev/null | \
-    sudo /usr/local/bin/pi_fm_adv -a - -f $FREQ
+    -f wav -ar 44100 -ac 1 pipe:1 2>/dev/null > $FIFO
+}
 
-  # Fallback to buffer
+feed_buffer() {
   if [ -s $BUFFER ]; then
-    sudo /usr/local/bin/pi_fm_adv -a $BUFFER -f $FREQ 2>/dev/null
+    /usr/bin/ffmpeg -re -y \
+      -i $BUFFER -af "dynaudnorm=p=0.95:m=100:s=12:g=15" \
+      -f wav -ar 44100 -ac 1 pipe:1 2>/dev/null > $FIFO
+  else
+    sleep 5
   fi
+}
 
-  sleep 3
+while kill -0 $FMPID 2>/dev/null; do
+  feed_live
+  feed_buffer
 done
